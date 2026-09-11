@@ -1,12 +1,12 @@
 import assert from 'node:assert';
-import { aiChat, AiError, resolveProvider, isAiConfigured, toolModels } from '../src/utils/ai.js';
+import { aiChat, AiError, resolveProvider, isAiConfigured, toolModels, textModels } from '../src/utils/ai.js';
 
 const realFetch = globalThis.fetch;
 let calls = [];
 function stub(handler) { calls = []; globalThis.fetch = async (url, init) => { calls.push({ url, body: JSON.parse(init.body) }); return handler(calls.length - 1); }; }
 const res = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-function reset() { for (const k of Object.keys(process.env)) if (k.startsWith('LIARA_AI') || k.startsWith('AI_MODELS') || k === 'OPENROUTER_API_KEY' || k === 'LOVABLE_API_KEY') delete process.env[k]; }
+function reset() { for (const k of Object.keys(process.env)) if (k.startsWith('LIARA_AI') || k.startsWith('AI_MODELS') || k.startsWith('OPENAI_') || k === 'OPENROUTER_API_KEY' || k === 'LOVABLE_API_KEY' || k === 'AI_PROVIDER') delete process.env[k]; }
 
 // 1. not configured
 reset();
@@ -93,5 +93,78 @@ await aiChat({ messages: [], tools: [{}], label: 't12' });
 assert.equal(calls[0].body.model, 'my/model-a');
 console.log('12 ok AI_MODELS_TOOLS overrides the chain without a redeploy');
 
+// ── OpenAI provider ──────────────────────────────────────────────────────────
+
+// 13. OPENAI_API_KEY alone is enough to configure AI
+reset(); process.env.OPENAI_API_KEY = 'sk-test';
+assert.equal(resolveProvider().name, 'openai');
+assert.equal(resolveProvider().url, 'https://api.openai.com/v1/chat/completions');
+console.log('13 ok OPENAI_API_KEY alone resolves the OpenAI provider');
+
+// 14. but it must NOT hijack a deployment already working on OpenRouter,
+//     since OPENAI_API_KEY also exists purely for speech-to-text
+reset(); process.env.OPENAI_API_KEY = 'sk-test'; process.env.OPENROUTER_API_KEY = 'or-test';
+assert.equal(resolveProvider().name, 'openrouter');
+console.log('14 ok OPENAI_API_KEY does not displace a configured OpenRouter');
+
+// 15. AI_PROVIDER pins the choice explicitly
+reset(); process.env.OPENAI_API_KEY = 'sk-test'; process.env.OPENROUTER_API_KEY = 'or-test';
+process.env.AI_PROVIDER = 'openai';
+assert.equal(resolveProvider().name, 'openai');
+console.log('15 ok AI_PROVIDER=openai overrides auto-detection');
+
+// 16. a pinned provider never silently falls through to another
+reset(); process.env.OPENROUTER_API_KEY = 'or-test'; process.env.AI_PROVIDER = 'openai';
+assert.equal(resolveProvider(), null, 'pinned openai with no key must not fall back to openrouter');
+console.log('16 ok pinned provider with no key fails instead of falling back');
+
+// 17. OpenAI uses OpenAI model ids, not OpenRouter slugs
+reset(); process.env.OPENAI_API_KEY = 'sk-test';
+assert.deepEqual(toolModels(), ['gpt-4o-mini', 'gpt-4o']);
+assert.deepEqual(textModels(), ['gpt-4o-mini', 'gpt-4o']);
+stub(() => res(200, { choices: [{ message: { content: 'ok' } }] }));
+await aiChat({ messages: [], tools: [{}], label: 't17' });
+assert.equal(calls[0].body.model, 'gpt-4o-mini');
+assert.ok(!JSON.stringify(calls[0].body).includes(':free'), 'no free-tier slugs may reach OpenAI');
+console.log('17 ok OpenAI chain uses bare OpenAI ids (gpt-4o-mini, gpt-4o)');
+
+// 18. an OpenRouter-style chain still maps onto OpenAI ids
+reset(); process.env.OPENAI_API_KEY = 'sk-test';
+stub(() => res(200, { choices: [{ message: { content: 'ok' } }] }));
+await aiChat({ messages: [], models: ['openai/gpt-oss-120b:free', 'meta-llama/llama-3.3-70b-instruct:free'], label: 't18' });
+assert.equal(calls[0].body.model, 'gpt-4o-mini');
+console.log('18 ok OpenRouter-style slugs are mapped onto the OpenAI catalog');
+
+// 19. OPENAI_MODEL forces a single model
+reset(); process.env.OPENAI_API_KEY = 'sk-test'; process.env.OPENAI_MODEL = 'gpt-4.1-mini';
+assert.deepEqual(toolModels(), ['gpt-4.1-mini']);
+stub(() => res(200, { choices: [{ message: { content: 'ok' } }] }));
+await aiChat({ messages: [], label: 't19' });
+assert.equal(calls[0].body.model, 'gpt-4.1-mini');
+console.log('19 ok OPENAI_MODEL pins a single model');
+
+// 20. OPENAI_BASE_URL retargets the endpoint (for a reachable proxy)
+reset(); process.env.OPENAI_API_KEY = 'sk-test'; process.env.OPENAI_BASE_URL = 'https://proxy.example.com/v1/';
+assert.equal(resolveProvider().url, 'https://proxy.example.com/v1/chat/completions');
+console.log('20 ok OPENAI_BASE_URL retargets the endpoint, trailing slash trimmed');
+
+// 21. OpenRouter attribution headers must not be sent to OpenAI
+reset(); process.env.OPENAI_API_KEY = 'sk-test';
+let sentHeaders;
+globalThis.fetch = async (u, init) => { sentHeaders = init.headers; return res(200, { choices: [{ message: { content: 'x' } }] }); };
+await aiChat({ messages: [], label: 't21' });
+assert.ok(!('HTTP-Referer' in sentHeaders), 'HTTP-Referer is an OpenRouter header');
+assert.ok(!('X-Title' in sentHeaders), 'X-Title is an OpenRouter header');
+assert.ok(sentHeaders.Authorization.startsWith('Bearer '));
+console.log('21 ok OpenRouter-only headers are not sent to OpenAI');
+
+// 22. a 401 from OpenAI still reports honestly
+reset(); process.env.OPENAI_API_KEY = 'sk-bad';
+stub(() => res(401, { error: { message: 'Incorrect API key provided' } }));
+await assert.rejects(() => aiChat({ messages: [], label: 't22' }),
+  e => e.status === 401 && e.persian.includes('معتبر نیست'));
+assert.equal(calls.length, 1);
+console.log('22 ok OpenAI 401 → 401 "کلید ... معتبر نیست", chain stops');
+
 globalThis.fetch = realFetch;
-console.log('\nAll 12 checks passed.');
+console.log('\nAll 22 checks passed.');

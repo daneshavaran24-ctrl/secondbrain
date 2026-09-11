@@ -46,9 +46,14 @@ curl https://mora-backend.liara.run/debug-ai
 
 | متغیر | لازم؟ | توضیح |
 |---|---|---|
-| `OPENROUTER_API_KEY` | یکی از این دو | مسیر پیش‌فرض |
-| `LIARA_AI_API_KEY` + `LIARA_AI_BASE_URL` | یکی از این دو | اولویت بالاتر؛ از داخل ایران در دسترس است |
+| `OPENROUTER_API_KEY` | یکی از سه provider | مسیر پیش‌فرض |
+| `LIARA_AI_API_KEY` + `LIARA_AI_BASE_URL` | یکی از سه provider | بالاترین اولویت؛ از داخل ایران در دسترس است |
+| `OPENAI_API_KEY` + `AI_PROVIDER=openai` | یکی از سه provider | OpenAI مستقیم — به هشدار پایین توجه کنید |
+| `AI_PROVIDER` | خیر | `liara` \| `openrouter` \| `openai` — انتخاب صریح provider |
 | `LIARA_AI_MODEL` | خیر | یک مدل ثابت را اجبار می‌کند |
+| `OPENAI_MODEL` | خیر | یک مدل ثابت OpenAI |
+| `AI_MODELS_OPENAI` | خیر | زنجیره‌ی مدل OpenAI، پیش‌فرض `gpt-4o-mini,gpt-4o` |
+| `OPENAI_BASE_URL` | خیر | اگر `api.openai.com` در دسترس نیست |
 | `AI_MODELS_TOOLS` | خیر | زنجیره‌ی مدل برای دستیار (باید tool calling داشته باشند) |
 | `AI_MODELS_TEXT` | خیر | زنجیره‌ی مدل برای چت و خلاصه‌سازی |
 | `AI_TIMEOUT_MS` | خیر | مهلت هر تلاش، پیش‌فرض ۳۰ ثانیه |
@@ -57,6 +62,28 @@ curl https://mora-backend.liara.run/debug-ai
 | `SPEECH_TO_TEXT_BASE_URL` | خیر | اگر `api.openai.com` بسته است |
 
 `LOVABLE_API_KEY` دیگر خوانده نمی‌شود.
+
+## استفاده از کلید OpenAI
+
+```
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+بدون `AI_PROVIDER=openai` فقط وجود `OPENAI_API_KEY` کافی نیست که ترافیک چت
+به OpenAI برود — چون همان متغیر برای تبدیل گفتار به متن هم استفاده می‌شود و
+نباید بی‌صدا provider فعلی را عوض کند.
+
+مدل‌ها خودکار به کاتالوگ OpenAI نگاشت می‌شوند (`gpt-4o-mini` بعد `gpt-4o`)،
+پس نیازی به دست زدن به `AI_MODELS_TOOLS` نیست.
+
+> ⚠️ **هشدار مهم:** OpenAI درخواست‌های آمده از IPهای ایران را رد می‌کند.
+> سرورهای Liara داخل ایران هستند، بنابراین یک کلید OpenAI به‌تنهایی از
+> `mora-backend` احتمالاً با ۴۰۳ برمی‌گردد — مستقل از اینکه کلید درست باشد.
+> اگر `/debug-ai` برای همه‌ی مدل‌ها `http_403` یا `network` داد، یا
+> `OPENAI_BASE_URL` را به یک endpoint سازگار و در دسترس بدهید، یا از Liara AI
+> استفاده کنید (بخش بعد). کلید OpenAI روی یک سرور خارج از ایران بی‌مشکل کار
+> می‌کند.
 
 ## اگر سرور به openrouter.ai دسترسی ندارد
 

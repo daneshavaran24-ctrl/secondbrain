@@ -4,11 +4,21 @@
  * Every AI route goes through `aiChat`, so the provider, the model chain,
  * timeouts, logging and error mapping live in exactly one place.
  *
- * Provider resolution (first match wins):
- *   1. Liara AI  — LIARA_AI_BASE_URL + LIARA_AI_API_KEY
+ * Provider resolution: AI_PROVIDER pins one explicitly ('liara' | 'openai' |
+ * 'openrouter'). Otherwise the first configured one wins, in this order:
+ *   1. Liara AI   — LIARA_AI_BASE_URL + LIARA_AI_API_KEY
  *      OpenAI-compatible gateway reachable from Iranian datacenters.
- *      Use this when the server cannot reach openrouter.ai directly.
  *   2. OpenRouter — OPENROUTER_API_KEY
+ *   3. OpenAI     — OPENAI_API_KEY (optionally OPENAI_BASE_URL)
+ *
+ * OpenAI is last in auto-detection on purpose: OPENAI_API_KEY already exists
+ * in deployments purely for speech-to-text, and finding it must not silently
+ * move chat traffic off whatever provider is already working. Set
+ * AI_PROVIDER=openai to choose it deliberately.
+ *
+ * Note: api.openai.com refuses requests from Iranian IPs, so a direct OpenAI
+ * key generally will NOT work from a server hosted in Iran. Point
+ * OPENAI_BASE_URL at a reachable OpenAI-compatible endpoint in that case.
  *
  * There is deliberately no fallback onto LOVABLE_API_KEY: sending one
  * provider's key to another provider only produces a 401 that is easy to
@@ -16,6 +26,7 @@
  */
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
 /** Models that must support tool/function calling. */
 const DEFAULT_TOOL_MODELS = [
@@ -34,6 +45,9 @@ const DEFAULT_TEXT_MODELS = [
   'openai/gpt-4o-mini',
 ];
 
+/** OpenAI's own catalog — used when the active provider is OpenAI. */
+const DEFAULT_OPENAI_MODELS = ['gpt-4o-mini', 'gpt-4o'];
+
 const DEFAULT_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 30000;
 
 function parseModelList(envValue, fallback) {
@@ -47,11 +61,19 @@ function parseModelList(envValue, fallback) {
  * fixed from the Liara panel without a redeploy.
  */
 export function toolModels() {
+  if (providerName() === 'openai') return openaiModels();
   return parseModelList(process.env.AI_MODELS_TOOLS, DEFAULT_TOOL_MODELS);
 }
 
 export function textModels() {
+  if (providerName() === 'openai') return openaiModels();
   return parseModelList(process.env.AI_MODELS_TEXT, DEFAULT_TEXT_MODELS);
+}
+
+function openaiModels() {
+  const single = process.env.OPENAI_MODEL;
+  if (single) return [single.trim()];
+  return parseModelList(process.env.AI_MODELS_OPENAI, DEFAULT_OPENAI_MODELS);
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -80,32 +102,81 @@ function mapModelForLiara(model) {
   return 'openai/gpt-4o-mini';
 }
 
+function openaiBaseUrl() {
+  const raw = (process.env.OPENAI_BASE_URL || OPENAI_DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
+  // Guard against a misconfigured value (e.g. the API key pasted into this field).
+  if (!/^https?:\/\//i.test(raw)) return OPENAI_DEFAULT_BASE_URL;
+  return raw;
+}
+
 /**
- * @returns {{name: 'liara'|'openrouter', url: string, key: string, mapModel: (m: string) => string} | null}
+ * Map an OpenRouter-style id onto OpenAI's catalog, so a chain configured for
+ * one provider does not break when the other is selected.
+ */
+function mapModelForOpenAI(model) {
+  const override = process.env.OPENAI_MODEL;
+  if (override) return override;
+  if (!model) return 'gpt-4o-mini';
+  const m = model.toLowerCase().replace(/:free$/, '');
+  // Already an OpenAI id ("gpt-4o-mini", "o4-mini", …) — pass it through.
+  if (!m.includes('/')) return model.replace(/:free$/, '');
+  // Vendor-prefixed. Only openai/* has a real counterpart; everything else
+  // (gemma, llama, deepseek, gemini) has none, so use the safe default.
+  if (m.startsWith('openai/')) {
+    const bare = m.slice('openai/'.length);
+    if (bare.startsWith('gpt-oss')) return 'gpt-4o-mini';
+    return bare;
+  }
+  return 'gpt-4o-mini';
+}
+
+const PROVIDERS = {
+  liara: () => {
+    const key = process.env.LIARA_AI_API_KEY;
+    const url = liaraBaseUrl();
+    if (!key || !url) return null;
+    return { name: 'liara', url: `${url}/chat/completions`, key, mapModel: mapModelForLiara };
+  },
+  openrouter: () => {
+    const key = process.env.OPENROUTER_API_KEY;
+    if (!key) return null;
+    return { name: 'openrouter', url: OPENROUTER_URL, key, mapModel: m => m };
+  },
+  openai: () => {
+    const key = process.env.OPENAI_API_KEY;
+    if (!key) return null;
+    return { name: 'openai', url: `${openaiBaseUrl()}/chat/completions`, key, mapModel: mapModelForOpenAI };
+  },
+};
+
+const AUTO_ORDER = ['liara', 'openrouter', 'openai'];
+
+/**
+ * @returns {{name: 'liara'|'openrouter'|'openai', url: string, key: string, mapModel: (m: string) => string} | null}
  */
 export function resolveProvider() {
-  const liaraKey = process.env.LIARA_AI_API_KEY;
-  const liaraUrl = liaraBaseUrl();
-  if (liaraKey && liaraUrl) {
-    return {
-      name: 'liara',
-      url: `${liaraUrl}/chat/completions`,
-      key: liaraKey,
-      mapModel: mapModelForLiara,
-    };
+  const pinned = process.env.AI_PROVIDER?.trim().toLowerCase();
+  if (pinned) {
+    const build = PROVIDERS[pinned];
+    if (!build) {
+      console.error(`[ai] AI_PROVIDER="${pinned}" is not one of: ${Object.keys(PROVIDERS).join(', ')}`);
+      return null;
+    }
+    // A pinned provider never silently falls through to another one — that is
+    // the whole point of pinning it.
+    return build();
   }
 
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  if (openrouterKey) {
-    return {
-      name: 'openrouter',
-      url: OPENROUTER_URL,
-      key: openrouterKey,
-      mapModel: m => m,
-    };
+  for (const name of AUTO_ORDER) {
+    const provider = PROVIDERS[name]();
+    if (provider) return provider;
   }
-
   return null;
+}
+
+/** Active provider name, or undefined when none is configured. */
+function providerName() {
+  return resolveProvider()?.name;
 }
 
 export function isAiConfigured() {
@@ -210,8 +281,11 @@ export async function aiChat(opts) {
         headers: {
           Authorization: `Bearer ${provider.key}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://aimora.app',
-          'X-Title': 'Mora Assistant',
+          // Attribution headers OpenRouter uses for its dashboard; OpenAI
+          // rejects unknown headers on some endpoints, so scope them.
+          ...(provider.name === 'openrouter'
+            ? { 'HTTP-Referer': 'https://aimora.app', 'X-Title': 'Mora Assistant' }
+            : {}),
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),

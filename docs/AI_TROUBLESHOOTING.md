@@ -47,7 +47,8 @@ curl https://mora-backend.liara.run/debug-ai
 | متغیر | لازم؟ | توضیح |
 |---|---|---|
 | `OPENROUTER_API_KEY` | یکی از سه provider | مسیر پیش‌فرض |
-| `LIARA_AI_API_KEY` + `LIARA_AI_BASE_URL` | یکی از سه provider | بالاترین اولویت؛ از داخل ایران در دسترس است |
+| `LIARA_AI_API_KEY` + `LIARA_AI_SERVICE_ID` | یکی از سه provider | بالاترین اولویت؛ از داخل ایران در دسترس است |
+| `LIARA_AI_BASE_URL` | خیر | override دستی URL ساخته‌شده (gateway غیراستاندارد) |
 | `OPENAI_API_KEY` + `AI_PROVIDER=openai` | یکی از سه provider | OpenAI مستقیم — به هشدار پایین توجه کنید |
 | `AI_PROVIDER` | خیر | `liara` \| `openrouter` \| `openai` — انتخاب صریح provider |
 | `LIARA_AI_MODEL` | خیر | یک مدل ثابت را اجبار می‌کند |
@@ -91,12 +92,18 @@ OPENAI_API_KEY=sk-...
 `timeout` یا `network` داد، به Liara AI سوییچ کنید:
 
 ```
-LIARA_AI_API_KEY=<کلید سرویس هوش مصنوعی Liara>
-LIARA_AI_BASE_URL=https://ai.liara.ir/api/v1/<service-id>/openai/v1
+LIARA_AI_API_KEY=<کلید از پنل>
+LIARA_AI_SERVICE_ID=<شناسه سرویس از پنل>
 ```
 
-به‌محض ست شدن هر دو، این provider خودکار اولویت می‌گیرد و model idهای
-سبک OpenRouter به کاتالوگ Liara نگاشت می‌شوند. نیازی به تغییر کد نیست.
+هر دو مقدار در صفحه‌ی سرویس هوش مصنوعی پنل Liara هستند؛ base URL خودکار از
+روی شناسه ساخته می‌شود و لازم نیست دستی سرهمش کنید.
+
+به‌محض ست شدن هر دو، این provider خودکار اولویت می‌گیرد و model idهای سبک
+OpenRouter به کاتالوگ Liara نگاشت می‌شوند. نیازی به تغییر کد نیست.
+
+اگر gateway غیراستانداردی دارید، `LIARA_AI_BASE_URL` را ست کنید تا جای URL
+ساخته‌شده را بگیرد.
 
 ## خواندن لاگ‌ها
 
@@ -127,6 +134,6 @@ LIARA_AI_BASE_URL=https://ai.liara.ir/api/v1/<service-id>/openai/v1
 cd backend && npm test
 ```
 
-۱۲ تست واحد روی `utils/ai.js` و ۱۰ تست end-to-end که روت واقعی دستیار را
+۲۷ تست واحد روی `utils/ai.js` و ۱۰ تست end-to-end که روت واقعی دستیار را
 با یک provider جعلی بالا می‌آورد — از جمله این تضمین که خطای ۴۰۱ هرگز
 دوباره به‌صورت «سرویس شلوغ است» گزارش نشود.

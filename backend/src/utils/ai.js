@@ -6,7 +6,7 @@
  *
  * Provider resolution: AI_PROVIDER pins one explicitly ('liara' | 'openai' |
  * 'openrouter'). Otherwise the first configured one wins, in this order:
- *   1. Liara AI   — LIARA_AI_BASE_URL + LIARA_AI_API_KEY
+ *   1. Liara AI   — LIARA_AI_API_KEY + (LIARA_AI_SERVICE_ID or LIARA_AI_BASE_URL)
  *      OpenAI-compatible gateway reachable from Iranian datacenters.
  *   2. OpenRouter — OPENROUTER_API_KEY
  *   3. OpenAI     — OPENAI_API_KEY (optionally OPENAI_BASE_URL)
@@ -78,13 +78,32 @@ function openaiModels() {
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
+const LIARA_AI_HOST = 'https://ai.liara.ir/api/v1';
+
+/**
+ * The Liara panel shows a service id and a key, not a ready-made base URL, so
+ * LIARA_AI_SERVICE_ID is accepted and the URL assembled from it. An explicit
+ * LIARA_AI_BASE_URL still wins, for a non-standard or self-hosted gateway.
+ */
 function liaraBaseUrl() {
   const raw = process.env.LIARA_AI_BASE_URL;
-  if (!raw) return undefined;
-  const trimmed = raw.trim().replace(/\/+$/, '');
-  // Guard against a misconfigured value (e.g. the API key pasted into this field).
-  if (!/^https?:\/\//i.test(trimmed)) return undefined;
-  return trimmed;
+  if (raw) {
+    const trimmed = raw.trim().replace(/\/+$/, '');
+    // Guard against a misconfigured value (e.g. the API key pasted into this field).
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    console.error('[ai] LIARA_AI_BASE_URL is not a URL — ignoring it');
+  }
+
+  const serviceId = process.env.LIARA_AI_SERVICE_ID?.trim();
+  if (serviceId) {
+    // A hex object id. Anything else is a pasted URL or key, not an id.
+    if (/^[A-Za-z0-9_-]{8,64}$/.test(serviceId)) {
+      return `${LIARA_AI_HOST}/${serviceId}/openai/v1`;
+    }
+    console.error('[ai] LIARA_AI_SERVICE_ID does not look like a service id — ignoring it');
+  }
+
+  return undefined;
 }
 
 /** Map an OpenRouter-style model id onto Liara's OpenAI-compatible catalog. */
@@ -259,7 +278,7 @@ export async function aiChat(opts) {
       'not_configured',
       503,
       'سرویس هوش مصنوعی پیکربندی نشده است. لطفاً با پشتیبانی تماس بگیرید.',
-      'Neither LIARA_AI_API_KEY+LIARA_AI_BASE_URL nor OPENROUTER_API_KEY is set',
+      'No provider: set LIARA_AI_API_KEY + LIARA_AI_SERVICE_ID, or OPENROUTER_API_KEY, or AI_PROVIDER=openai + OPENAI_API_KEY',
     );
   }
 

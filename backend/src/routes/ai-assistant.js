@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { aiChat, sendAiError, AiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -15,12 +16,7 @@ router.post('/', requireAuth, async (req, res) => {
   }
 
   const { prompt } = result.data;
-  const lovableApiKey = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!lovableApiKey) {
-    return res.status(500).json({ error: 'AI service is not configured' });
-  }
 
-  const MODELS = ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'deepseek/deepseek-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free'];
   const payload = {
     messages: [
       {
@@ -51,34 +47,17 @@ router.post('/', requireAuth, async (req, res) => {
   };
 
   try {
-    let response = null;
-    for (const model of MODELS) {
-      try {
-        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${lovableApiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://aimora.app' },
-          body: JSON.stringify({ ...payload, model }),
-        });
-        if (r.ok) { response = r; break; }
-        if (r.status === 401) { response = r; break; } // کلید API نامعتبر
-      } catch { /* try next */ }
-    }
+    const { data } = await aiChat({ ...payload, label: 'ai-assistant' });
 
-    if (!response) throw new Error('سرویس هوش مصنوعی در دسترس نیست');
-    if (!response.ok) {
-      if (response.status === 429) return res.status(429).json({ error: 'محدودیت تعداد درخواست. لطفاً چند دقیقه صبر کنید.' });
-      if (response.status === 402) return res.status(402).json({ error: 'اعتبار هوش مصنوعی تمام شده است.' });
-      throw new Error(`AI Gateway error: ${response.status}`);
-    }
-
-    const data = await response.json();
     const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall?.function?.arguments) throw new Error('Invalid AI response format');
+    if (!toolCall?.function?.arguments) {
+      throw new AiError('bad_tool_call', 502, 'پاسخ سرویس هوش مصنوعی در قالب مورد انتظار نبود.', 'no tool_calls in response');
+    }
 
     const suggestions = JSON.parse(toolCall.function.arguments);
     res.json(suggestions);
   } catch (error) {
-    res.status(500).json({ error: error.message || 'خطای ناشناخته در دستیار هوش مصنوعی' });
+    return sendAiError(res, error, 'ai-assistant');
   }
 });
 

@@ -154,21 +154,37 @@ const mockAuth = {
 const mockFunctions = {
   invoke: async (fnName: string, options?: { body?: any }) => {
     try {
-      const token = getAccessToken();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${BACKEND_URL}/${fnName}`, {
+      // apiFetch (not bare fetch) so an expired access token is refreshed and
+      // the call retried — otherwise every edge function starts failing with
+      // "Token invalid or expired" while from() queries keep working.
+      const res = await apiFetch(`/${fnName}`, {
         method: 'POST',
-        headers,
         body: JSON.stringify(options?.body || {}),
       });
 
-      const data = await res.json();
-      if (!res.ok) return { data: null, error: { message: data.error || 'خطا' } };
+      // A gateway error can return HTML rather than JSON.
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        // The backend sends the user-facing text as `error`, but some routes
+        // historically used `message`. Accept either before falling back.
+        const message =
+          data?.error ||
+          data?.message ||
+          (res.status === 401
+            ? 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.'
+            : `خطا در ارتباط با سرور (${res.status})`);
+        return { data: null, error: { message, status: res.status, code: data?.code } };
+      }
+
       return { data, error: null };
     } catch (err: any) {
-      return { data: null, error: { message: err.message } };
+      return { data: null, error: { message: err?.message || 'خطا در اتصال به سرور' } };
     }
   },
 };

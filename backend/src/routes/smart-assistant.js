@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { sendSms } from '../utils/sms.js';
+import { aiChat, sendAiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -55,16 +56,6 @@ const SYSTEM_PROMPT = `###### قانون مطلق زبان (غیرقابل نق�
 
 همیشه اول مطمئن شو چه کاری باید انجام شود، سپس با استفاده از ابزار مناسب اجرا کن.`;
 
-// ─── Models with fallback ─────────────────────────────────────────────────────
-const MODELS = [
-  'openai/gpt-oss-120b:free',
-  'openai/gpt-oss-20b:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'deepseek/deepseek-v3-0324:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getActionFeedback(fn, params) {
   const map = {
@@ -117,16 +108,14 @@ router.post('/execute-sms', requireAuth, async (req, res) => {
     await sendSms(phone, message);
     res.json({ success: true, to: phone });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('[smart-assistant] SMS send failed:', err);
+    res.status(502).json({ success: false, error: 'ارسال پیامک ناموفق بود. لطفاً دوباره تلاش کنید.' });
   }
 });
 
 router.post('/', requireAuth, async (req, res) => {
   const { message, conversationHistory = [], context = {}, attachment = null } = req.body;
   if (!message) return res.status(400).json({ error: 'message is required' });
-
-  const aiKey = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!aiKey) return res.status(500).json({ error: 'AI service is not configured' });
 
   try {
     // Build messages
@@ -145,33 +134,15 @@ router.post('/', requireAuth, async (req, res) => {
       { role: 'user', content: userContent },
     ];
 
-    // Try models with fallback
-    let aiResponse = null;
-    for (const model of MODELS) {
-      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${aiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://aimora.app',
-          'X-Title': 'Aimora Assistant',
-        },
-        body: JSON.stringify({ model, messages, tools: ASSISTANT_TOOLS, tool_choice: 'auto', temperature: 0.7, max_tokens: 1500 }),
-      });
-
-      if (r.status === 401) break; // کلید API نامعتبر
-      if (!r.ok) continue; // مدل در دسترس نیست → مدل بعدی
-
-      const data = await r.json();
-      if (data.choices?.[0]) { aiResponse = data; break; }
-    }
-
-    if (!aiResponse) {
-      return res.status(429).json({
-        message: 'سرویس هوش مصنوعی در حال حاضر شلوغ است. لطفاً چند لحظه دیگر تلاش کنید.\n\n💬 کار دیگری هست؟',
-        actions: [], questions: []
-      });
-    }
+    // Walks the tool-capable model chain; the real failure reason is preserved.
+    const { data: aiResponse } = await aiChat({
+      messages,
+      tools: ASSISTANT_TOOLS,
+      tool_choice: 'auto',
+      temperature: 0.7,
+      max_tokens: 1500,
+      label: 'smart-assistant',
+    });
 
     const choice = aiResponse.choices[0];
     const result = { message: '', actions: [], questions: [] };
@@ -228,11 +199,8 @@ router.post('/', requireAuth, async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    res.status(500).json({
-      message: 'متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.\n\n💬 کار دیگری هست؟',
-      actions: [], questions: [],
-      error: error.message
-    });
+    // sendAiError emits both `error` and `message` and logs the operator detail.
+    return sendAiError(res, error, 'smart-assistant', { actions: [], questions: [] });
   }
 });
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { sendSms } from '../utils/sms.js';
+import { aiChat, sendAiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -21,6 +22,23 @@ const ASSISTANT_TOOLS = [
   { type:'function', function:{ name:'create_tasks_batch', description:'ایجاد چند وظیفه به‌طور همزمان', parameters:{ type:'object', properties:{ tasks:{type:'array',items:{type:'object',properties:{title:{type:'string'},due_date:{type:'string'},priority:{type:'string'},domain:{type:'string'}}}} }, required:['tasks'] } } },
   { type:'function', function:{ name:'get_pending_tasks', description:'بررسی وظایف در انتظار', parameters:{ type:'object', properties:{ domain:{type:'string',enum:['all','personal','professional','organizational']} } } } },
   { type:'function', function:{ name:'ask_clarification', description:'سوال از کاربر برای اطلاعات بیشتر', parameters:{ type:'object', properties:{ question:{type:'string'}, options:{type:'array',items:{type:'string'}}, field:{type:'string'} }, required:['question'] } } },
+  // ── Restored in the Node port: the frontend action executor already
+  //    implements all of these, but the backend stopped offering them as
+  //    tools, so the model could never trigger them. ──────────────────────────
+  { type:'function', function:{ name:'update_meeting', description:'تغییر اطلاعات یک جلسه موجود', parameters:{ type:'object', properties:{ meeting_id:{type:'string'}, search_query:{type:'string',description:'عبارت جستجو برای پیدا کردن جلسه'}, updates:{type:'object',properties:{ title:{type:'string'}, date:{type:'string'}, time:{type:'string'}, location:{type:'string'} }} } } } },
+  { type:'function', function:{ name:'search_calendar', description:'جستجوی رویدادها و قرارهای تقویم', parameters:{ type:'object', properties:{ query:{type:'string',description:'عبارت جستجو'}, date_from:{type:'string',description:'از تاریخ'}, date_to:{type:'string',description:'تا تاریخ'} } } } },
+  { type:'function', function:{ name:'search_contacts', description:'جستجوی مخاطبین', parameters:{ type:'object', properties:{ query:{type:'string',description:'نام یا عبارت جستجو'} }, required:['query'] } } },
+  { type:'function', function:{ name:'send_notification', description:'ارسال پیام یا اطلاع‌رسانی به یک شخص', parameters:{ type:'object', properties:{ recipient:{type:'string',description:'نام یا شماره گیرنده'}, message:{type:'string',description:'متن پیام'}, method:{type:'string',enum:['sms','email','telegram'],description:'روش ارسال'} }, required:['recipient','message'] } } },
+  { type:'function', function:{ name:'save_meeting_recording', description:'ذخیره ضبط یا رونویسی جلسه', parameters:{ type:'object', properties:{ title:{type:'string'}, transcript:{type:'string',description:'متن پیاده‌شده جلسه'}, meeting_date:{type:'string'}, participants:{type:'array',items:{type:'string'}}, duration_minutes:{type:'number'}, audio_url:{type:'string'} }, required:['title'] } } },
+  { type:'function', function:{ name:'import_contacts_batch', description:'وارد کردن چند مخاطب به‌طور همزمان', parameters:{ type:'object', properties:{ contacts:{type:'array',items:{type:'object',properties:{ name:{type:'string'}, phone:{type:'string'}, email:{type:'string'}, organization:{type:'string'}, position:{type:'string'} },required:['name']}}, skip_duplicates:{type:'boolean'} }, required:['contacts'] } } },
+  { type:'function', function:{ name:'add_resume_item', description:'افزودن مورد جدید به رزومه', parameters:{ type:'object', properties:{ section:{type:'string',enum:['education','work','skills','certificates','awards','affiliations'],description:'بخش رزومه'}, title:{type:'string'}, organization:{type:'string'}, start_date:{type:'string'}, end_date:{type:'string'}, description:{type:'string'}, location:{type:'string'} }, required:['section','title'] } } },
+  { type:'function', function:{ name:'create_csr_project', description:'ایجاد پروژه مسئولیت اجتماعی', parameters:{ type:'object', properties:{ title:{type:'string'}, description:{type:'string'}, type:{type:'string',enum:['charity','environmental','educational','health','community']}, budget:{type:'number'}, start_date:{type:'string'}, end_date:{type:'string'}, beneficiaries:{type:'array',items:{type:'string'}}, partners:{type:'array',items:{type:'string'}} }, required:['title'] } } },
+  { type:'function', function:{ name:'complete_habit', description:'ثبت انجام یک عادت برای امروز', parameters:{ type:'object', properties:{ habit_name:{type:'string',description:'نام عادت'}, notes:{type:'string'} }, required:['habit_name'] } } },
+  { type:'function', function:{ name:'create_legal_case', description:'ایجاد پرونده حقوقی جدید', parameters:{ type:'object', properties:{ title:{type:'string'}, case_number:{type:'string'}, case_type:{type:'string',description:'نوع پرونده، مثلاً حقوقی یا کیفری'}, court:{type:'string',description:'نام دادگاه'}, opposing_party:{type:'string',description:'طرف مقابل'}, description:{type:'string'}, next_hearing_date:{type:'string',description:'تاریخ جلسه بعدی'} }, required:['title'] } } },
+  { type:'function', function:{ name:'save_lawyer_note', description:'ذخیره یادداشت حقوقی', parameters:{ type:'object', properties:{ title:{type:'string'}, content:{type:'string'}, case_title:{type:'string',description:'عنوان پرونده مرتبط'}, category:{type:'string'} }, required:['title','content'] } } },
+  { type:'function', function:{ name:'create_organization_mission', description:'ایجاد ماموریت سازمانی', parameters:{ type:'object', properties:{ title:{type:'string'}, description:{type:'string'}, priority:{type:'string',enum:['low','medium','high','urgent']}, due_date:{type:'string'} }, required:['title'] } } },
+  { type:'function', function:{ name:'request_missing_info', description:'درخواست اطلاعات تکمیلی از کاربر وقتی داده‌های استخراج‌شده ناقص است', parameters:{ type:'object', properties:{ data_type:{type:'string',description:'نوع داده، مثلاً مخاطب یا وظیفه'}, extracted_data:{type:'object'}, missing_fields:{type:'array',items:{type:'string'}}, suggestions:{type:'array',items:{type:'string'}} }, required:['data_type','missing_fields'] } } },
+  { type:'function', function:{ name:'process_attachment', description:'پردازش فایل ضمیمه (خلاصه‌سازی، تحلیل یا استخراج داده)', parameters:{ type:'object', properties:{ file_content:{type:'string'}, file_type:{type:'string'}, action:{type:'string',enum:['summarize','analyze','extract_data']} }, required:['action'] } } },
   { type:'function', function:{ name:'send_sms', description:'ارسال پیامک به یک شماره موبایل', parameters:{ type:'object', properties:{ phone:{type:'string',description:'شماره موبایل گیرنده مثلاً ۰۹۱۲۱۲۳۴۵۶۷'}, message:{type:'string',description:'متن پیامک'} }, required:['phone','message'] } } },
 ];
 
@@ -55,17 +73,17 @@ const SYSTEM_PROMPT = `###### قانون مطلق زبان (غیرقابل نق�
 
 همیشه اول مطمئن شو چه کاری باید انجام شود، سپس با استفاده از ابزار مناسب اجرا کن.`;
 
-// ─── Models with fallback ─────────────────────────────────────────────────────
-const MODELS = [
-  'openai/gpt-oss-120b:free',
-  'openai/gpt-oss-20b:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'deepseek/deepseek-v3-0324:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+const RESUME_SECTIONS = {
+  education:'تحصیلات', work:'سوابق کاری', skills:'مهارت‌ها',
+  certificates:'گواهینامه‌ها', awards:'افتخارات', affiliations:'عضویت‌ها',
+};
+
+const CSR_TYPES = {
+  charity:'خیریه', environmental:'محیط‌زیستی', educational:'آموزشی',
+  health:'سلامت', community:'اجتماعی',
+};
+
 function getActionFeedback(fn, params) {
   const map = {
     create_meeting: { location:'تقویم حرفه‌ای', details:`قرار «${params.title||''}» - ${params.date||''} ${params.time||''}`.trim() },
@@ -83,6 +101,20 @@ function getActionFeedback(fn, params) {
     create_tasks_batch: { location:'لیست وظایف', details:`${(params.tasks||[]).length} وظیفه جدید` },
     get_pending_tasks: { location:'وظایف', details:`حوزه: ${params.domain||'همه'}` },
     send_sms: { location:'پیامک', details:`به ${params.phone||''}: ${(params.message||'').substring(0,40)}${(params.message||'').length>40?'...':''}` },
+    update_meeting: { location:'تقویم حرفه‌ای', details:'اطلاعات قرار به‌روزرسانی خواهد شد' },
+    search_calendar: { location:'تقویم', details:`جستجو: ${params.query||'همه رویدادها'}` },
+    search_contacts: { location:'مخاطبین', details:`جستجو: ${params.query||''}` },
+    send_notification: { location:'پیام‌رسانی', details:`پیام به ${params.recipient||''}` },
+    save_meeting_recording: { location:'آرشیو ضبط جلسات', details:`«${params.title||''}» - ${params.duration_minutes||0} دقیقه` },
+    import_contacts_batch: { location:'مخاطبین حرفه‌ای', details:`${(params.contacts||[]).length} مخاطب جدید` },
+    add_resume_item: { location:`رزومه حرفه‌ای > ${RESUME_SECTIONS[params.section]||params.section||''}`, details:`${params.title||''}${params.organization?` - ${params.organization}`:''}` },
+    create_csr_project: { location:'مسئولیت اجتماعی', details:`پروژه «${params.title||''}» - ${CSR_TYPES[params.type]||params.type||'عمومی'}` },
+    complete_habit: { location:'عادت‌ها', details:`عادت «${params.habit_name||''}» انجام شد` },
+    create_legal_case: { location:'پرونده‌های حقوقی', details:`«${params.title||''}»${params.court?` - ${params.court}`:''}` },
+    save_lawyer_note: { location:'یادداشت‌های حقوقی', details:`«${params.title||''}»` },
+    create_organization_mission: { location:'ماموریت‌های سازمانی', details:`«${params.title||''}»` },
+    request_missing_info: { location:'درخواست اطلاعات', details:`نوع: ${params.data_type||''}` },
+    process_attachment: { location:'پردازش فایل', details:`عملیات: ${params.action||''}` },
   };
   return map[fn] || { location:'سیستم', details:fn };
 }
@@ -104,6 +136,20 @@ function getActionDescription(fn, params) {
     create_tasks_batch: `✅ ${(params.tasks||[]).length} وظیفه جدید`,
     get_pending_tasks: '📊 بررسی وظایف در انتظار',
     send_sms: `📱 ارسال پیامک به ${params.phone||''}`,
+    update_meeting: '✏️ ویرایش قرار',
+    search_calendar: `🔍 جستجوی تقویم: «${params.query||''}»`,
+    search_contacts: `🔍 جستجوی مخاطب: «${params.query||''}»`,
+    send_notification: `📨 ارسال پیام به ${params.recipient||''}`,
+    save_meeting_recording: `🎤 ذخیره ضبط جلسه: «${params.title||''}»`,
+    import_contacts_batch: `👥 وارد کردن ${(params.contacts||[]).length} مخاطب`,
+    add_resume_item: `📄 افزودن به رزومه (${RESUME_SECTIONS[params.section]||params.section||''}): «${params.title||''}»`,
+    create_csr_project: `🌱 پروژه مسئولیت اجتماعی: «${params.title||''}»`,
+    complete_habit: `✔️ ثبت عادت: «${params.habit_name||''}»`,
+    create_legal_case: `⚖️ پرونده حقوقی: «${params.title||''}»`,
+    save_lawyer_note: `📑 یادداشت حقوقی: «${params.title||''}»`,
+    create_organization_mission: `🏢 ماموریت سازمانی: «${params.title||''}»`,
+    request_missing_info: '❓ درخواست اطلاعات تکمیلی',
+    process_attachment: '📎 پردازش فایل ضمیمه',
   };
   return map[fn] || fn;
 }
@@ -117,16 +163,14 @@ router.post('/execute-sms', requireAuth, async (req, res) => {
     await sendSms(phone, message);
     res.json({ success: true, to: phone });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('[smart-assistant] SMS send failed:', err);
+    res.status(502).json({ success: false, error: 'ارسال پیامک ناموفق بود. لطفاً دوباره تلاش کنید.' });
   }
 });
 
 router.post('/', requireAuth, async (req, res) => {
   const { message, conversationHistory = [], context = {}, attachment = null } = req.body;
   if (!message) return res.status(400).json({ error: 'message is required' });
-
-  const aiKey = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!aiKey) return res.status(500).json({ error: 'AI service is not configured' });
 
   try {
     // Build messages
@@ -145,41 +189,29 @@ router.post('/', requireAuth, async (req, res) => {
       { role: 'user', content: userContent },
     ];
 
-    // Try models with fallback
-    let aiResponse = null;
-    for (const model of MODELS) {
-      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${aiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://aimora.app',
-          'X-Title': 'Aimora Assistant',
-        },
-        body: JSON.stringify({ model, messages, tools: ASSISTANT_TOOLS, tool_choice: 'auto', temperature: 0.7, max_tokens: 1500 }),
-      });
-
-      if (r.status === 401) break; // کلید API نامعتبر
-      if (!r.ok) continue; // مدل در دسترس نیست → مدل بعدی
-
-      const data = await r.json();
-      if (data.choices?.[0]) { aiResponse = data; break; }
-    }
-
-    if (!aiResponse) {
-      return res.status(429).json({
-        message: 'سرویس هوش مصنوعی در حال حاضر شلوغ است. لطفاً چند لحظه دیگر تلاش کنید.\n\n💬 کار دیگری هست؟',
-        actions: [], questions: []
-      });
-    }
+    // Walks the tool-capable model chain; the real failure reason is preserved.
+    const { data: aiResponse } = await aiChat({
+      messages,
+      tools: ASSISTANT_TOOLS,
+      tool_choice: 'auto',
+      temperature: 0.7,
+      max_tokens: 1500,
+      label: 'smart-assistant',
+    });
 
     const choice = aiResponse.choices[0];
     const result = { message: '', actions: [], questions: [] };
 
     const safeActions = ['create_meeting','create_task','create_reminder','save_for_later',
       'save_journal_entry','save_gratitude','create_contact','save_meeting_summary',
-      'create_tasks_batch','save_health_metrics','save_idea','get_pending_tasks','save_knowledge'];
-    // send_sms intentionally excluded — requires explicit user confirmation before sending
+      'create_tasks_batch','save_health_metrics','save_idea','get_pending_tasks','save_knowledge',
+      // Restored actions that only create or read — never mutate or send.
+      'search_calendar','search_contacts','save_meeting_recording','import_contacts_batch',
+      'add_resume_item','create_csr_project','complete_habit','create_legal_case',
+      'save_lawyer_note','create_organization_mission','request_missing_info','process_attachment'];
+    // send_sms, send_notification, update_meeting and cancel_meeting are
+    // intentionally excluded — each sends or destroys something, so the user
+    // confirms before it runs.
 
     // Process tool calls
     if (choice.message?.tool_calls?.length > 0) {
@@ -228,11 +260,8 @@ router.post('/', requireAuth, async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    res.status(500).json({
-      message: 'متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.\n\n💬 کار دیگری هست؟',
-      actions: [], questions: [],
-      error: error.message
-    });
+    // sendAiError emits both `error` and `message` and logs the operator detail.
+    return sendAiError(res, error, 'smart-assistant', { actions: [], questions: [] });
   }
 });
 

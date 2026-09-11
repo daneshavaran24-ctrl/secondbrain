@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { aiChat, sendAiError, AiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -18,21 +19,19 @@ const LANGUAGE_NAMES = {
   russian: 'روسی', chinese: 'چینی',
 };
 
-const MODELS = ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'deepseek/deepseek-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free'];
-
-async function fetchWithRetry(url, options) {
-  const baseBody = JSON.parse(options.body);
-  for (const model of MODELS) {
-    try {
-      const response = await fetch(url, {
-        ...options,
-        body: JSON.stringify({ ...baseBody, model }),
-      });
-      if (response.ok) return response;
-      if (response.status === 401) return response; // کلید API نامعتبر
-    } catch { /* try next */ }
+/** Returns the assistant's text, or throws an AiError the route turns into JSON. */
+async function askAI(messages, maxTokens = 2000) {
+  const { data } = await aiChat({
+    messages,
+    temperature: 0.7,
+    max_tokens: maxTokens,
+    label: 'generate-business-email',
+  });
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new AiError('empty_response', 502, 'پاسخی از سرویس هوش مصنوعی دریافت نشد.', 'no content in choices[0]');
   }
-  return null;
+  return content;
 }
 
 router.post('/', async (req, res) => {
@@ -42,8 +41,6 @@ router.post('/', async (req, res) => {
     regenerateOnly, currentSubject, currentBody,
   } = req.body;
 
-  const LOVABLE_API_KEY = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!LOVABLE_API_KEY) return res.status(500).json({ error: 'AI service is not configured' });
 
   let signatureBlock = '';
   if (senderInfo?.name) {
@@ -63,65 +60,48 @@ ${recipientOrg ? `سازمان مخاطب: ${recipientOrg}` : ''}
 ${signatureBlock}
 زبان: ${LANGUAGE_NAMES[primaryLanguage] || primaryLanguage || 'فارسی'}`;
 
-  const aiOptions = (messages, maxTokens = 2000) => ({
-    method: 'POST',
-    headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://aimora.app' },
-    body: JSON.stringify({ model: 'placeholder', messages, temperature: 0.7, max_tokens: maxTokens }),
-  });
-
   try {
     let result = {};
 
     if (regenerateOnly === 'subject') {
-      const response = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', aiOptions([
+      const content = await askAI([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `یک موضوع کوتاه (حداکثر ۱۰ کلمه) برای این ایمیل بنویس:\n${currentBody}\nفقط موضوع را بنویس.` },
-      ], 100));
-      if (!response.ok) throw new Error(`AI error: ${response.status}`);
-      const data = await response.json();
-      result.subject = data.choices[0].message.content.trim().replace(/^["']|["']$/g, '');
+      ], 100);
+      result.subject = content.trim().replace(/^["']|["']$/g, '');
 
     } else if (regenerateOnly === 'body') {
-      const response = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', aiOptions([
+      const content = await askAI([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `متن جدیدی برای ایمیل با موضوع "${currentSubject}" بنویس. فقط متن ایمیل را بنویس.` },
-      ]));
-      if (!response.ok) throw new Error(`AI error: ${response.status}`);
-      const data = await response.json();
-      result.body = data.choices[0].message.content.trim();
+      ]);
+      result.body = content.trim();
 
     } else if (regenerateOnly === 'translation') {
       const translations = {};
       for (const lang of translateTo) {
         const langName = LANGUAGE_NAMES[lang] || lang;
-        const response = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', aiOptions([
-          { role: 'system', content: `مترجم حرفه‌ای تجاری. به ${langName} ترجمه کن.` },
-          { role: 'user', content: `ترجمه به ${langName}:\nSUBJECT: ${currentSubject}\nBODY:\n${currentBody}\n\nفرمت:\nSUBJECT: [ترجمه]\nBODY:\n[ترجمه]` },
-        ]));
-        if (response.ok) {
-          const data = await response.json();
-          const content = data.choices[0].message.content;
+        // One failed language must not sink the whole request.
+        try {
+          const content = await askAI([
+            { role: 'system', content: `مترجم حرفه‌ای تجاری. به ${langName} ترجمه کن.` },
+            { role: 'user', content: `ترجمه به ${langName}:\nSUBJECT: ${currentSubject}\nBODY:\n${currentBody}\n\nفرمت:\nSUBJECT: [ترجمه]\nBODY:\n[ترجمه]` },
+          ]);
           const subjectMatch = content.match(/SUBJECT:\s*(.+?)(?:\n|BODY:)/s);
           const bodyMatch = content.match(/BODY:\s*([\s\S]+)/);
           translations[lang] = { subject: subjectMatch?.[1]?.trim() || '', body: bodyMatch?.[1]?.trim() || '' };
+        } catch (err) {
+          console.error(`[generate-business-email] translation to ${lang} failed:`, err.message);
         }
       }
       result.translations = translations;
 
     } else {
-      const response = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', aiOptions([
+      const content = await askAI([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `یک ایمیل تجاری حرفه‌ای بنویس.\nپاسخ را دقیقاً به این فرمت بده:\nSUBJECT: [موضوع]\nBODY:\n[متن]` },
-      ]));
+      ]);
 
-      if (!response.ok) {
-        if (response.status === 429) return res.status(429).json({ error: 'Rate limit exceeded' });
-        if (response.status === 402) return res.status(402).json({ error: 'Payment required' });
-        throw new Error(`AI error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices[0].message.content;
       const subjectMatch = content.match(/SUBJECT:\s*(.+?)(?:\n|BODY:)/s);
       const bodyMatch = content.match(/BODY:\s*([\s\S]+)/);
       result.subject = subjectMatch?.[1]?.trim() || 'ایمیل تجاری';
@@ -131,17 +111,17 @@ ${signatureBlock}
         const translations = {};
         for (const lang of translateTo) {
           const langName = LANGUAGE_NAMES[lang] || lang;
-          const transResponse = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', aiOptions([
-            { role: 'system', content: `مترجم حرفه‌ای تجاری. به ${langName} ترجمه کن.` },
-            { role: 'user', content: `ترجمه به ${langName}:\nSUBJECT: ${result.subject}\nBODY:\n${result.body}\n\nفرمت:\nSUBJECT: [ترجمه]\nBODY:\n[ترجمه]` },
-          ]));
-          if (transResponse?.ok) {
-            const tData = await transResponse.json();
-            const tContent = tData.choices[0].message.content;
+          try {
+            const tContent = await askAI([
+              { role: 'system', content: `مترجم حرفه‌ای تجاری. به ${langName} ترجمه کن.` },
+              { role: 'user', content: `ترجمه به ${langName}:\nSUBJECT: ${result.subject}\nBODY:\n${result.body}\n\nفرمت:\nSUBJECT: [ترجمه]\nBODY:\n[ترجمه]` },
+            ]);
             translations[lang] = {
               subject: tContent.match(/SUBJECT:\s*(.+?)(?:\n|BODY:)/s)?.[1]?.trim() || '',
               body: tContent.match(/BODY:\s*([\s\S]+)/)?.[1]?.trim() || '',
             };
+          } catch (err) {
+            console.error(`[generate-business-email] translation to ${lang} failed:`, err.message);
           }
         }
         result.translations = translations;
@@ -150,7 +130,7 @@ ${signatureBlock}
 
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return sendAiError(res, error, 'generate-business-email');
   }
 });
 

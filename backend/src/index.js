@@ -7,6 +7,7 @@ import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import pool from './db/index.js';
+import { aiChat, resolveProvider, toolModels, textModels } from './utils/ai.js';
 
 // Routes
 import authRouter from './routes/auth.js';
@@ -50,31 +51,47 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'BrainForge Backend' });
 });
 
-// Debug: test OpenRouter from server
+/**
+ * Diagnostics for the AI stack. Reports which provider is configured and
+ * probes each model in the chain individually, so a dead model id, a bad key
+ * and a blocked egress route are told apart at a glance.
+ * Never returns the key itself.
+ */
 app.get('/debug-ai', async (req, res) => {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return res.json({ error: 'no key' });
-  const models = ['openai/gpt-oss-120b:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-31b-it:free'];
-  const results = {};
-  for (const model of models) {
+  const provider = resolveProvider();
+  if (!provider) {
+    return res.status(503).json({
+      configured: false,
+      reason: 'Set LIARA_AI_API_KEY + LIARA_AI_BASE_URL, or OPENROUTER_API_KEY.',
+    });
+  }
+
+  const chain = [...new Set([...toolModels(), ...textModels()])];
+  const models = {};
+  for (const model of chain) {
     const t0 = Date.now();
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12000);
-      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: 'say hi' }], max_tokens: 10 }),
-        signal: ctrl.signal,
+      const { model: used } = await aiChat({
+        messages: [{ role: 'user', content: 'بگو سلام' }],
+        max_tokens: 10,
+        models: [model],
+        timeoutMs: 12000,
+        label: 'debug-ai',
       });
-      clearTimeout(timer);
-      const d = await r.json();
-      results[model] = { status: r.status, ms: Date.now() - t0, ok: !!d.choices?.[0]?.message?.content };
+      models[model] = { ok: true, ms: Date.now() - t0, sentAs: used };
     } catch (e) {
-      results[model] = { error: e.message, ms: Date.now() - t0 };
+      models[model] = { ok: false, ms: Date.now() - t0, code: e.code, status: e.status, detail: e.detail };
     }
   }
-  res.json(results);
+
+  res.json({
+    configured: true,
+    provider: provider.name,
+    endpoint: provider.url,
+    toolModels: toolModels(),
+    textModels: textModels(),
+    models,
+  });
 });
 
 // API Routes
@@ -104,24 +121,6 @@ app.use('/perplexity-proxy',          perplexityProxyRouter);
 app.use('/sub-users',                 subUsersRouter);
 app.use('/db',                        dbRouter);
 app.use('/supabase-proxy',            supabaseProxyRouter);
-
-// Debug: test OpenRouter connectivity from backend server
-app.get('/debug-ai', async (req, res) => {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return res.json({ error: 'no key' });
-  try {
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'openai/gpt-oss-20b:free', messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const d = await r.json();
-    res.json({ status: r.status, ok: r.ok, content: d.choices?.[0]?.message?.content, error: d.error });
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
 
 // Serve frontend
 if (existsSync('./public/index.html')) {
@@ -175,6 +174,16 @@ async function runMigration() {
 }
 
 runMigration().then(() => {
+  const aiProvider = resolveProvider();
+  if (aiProvider) {
+    console.log(`AI provider: ${aiProvider.name} (${aiProvider.url})`);
+  } else {
+    console.warn(
+      '⚠️  No AI provider configured — the assistant and every AI feature will fail.\n' +
+      '   Set OPENROUTER_API_KEY, or LIARA_AI_API_KEY + LIARA_AI_BASE_URL.'
+    );
+  }
+
   app.listen(PORT, () => {
     console.log(`BrainForge Backend running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);

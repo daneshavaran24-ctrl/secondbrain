@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "test": "node test/ai.test.mjs && node test/smart-assistant.test.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { aiChat, sendAiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -7,15 +8,6 @@ const schema = z.object({
   meetingTitle: z.string().trim().min(1, 'عنوان جلسه الزامی است').max(500),
   meetingDescription: z.string().trim().max(5000).optional().default(''),
 });
-
-const MODELS = [
-  'openai/gpt-oss-120b:free',
-  'openai/gpt-oss-20b:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'deepseek/deepseek-v3-0324:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-];
 
 // ─── RSS Feeds ─────────────────────────────────────────────────────────────────
 const IRAN_FEEDS = [
@@ -96,32 +88,28 @@ async function fetchRSS(feedInfo, timeoutMs = 5000) {
 }
 
 // ─── AI Call ──────────────────────────────────────────────────────────────────
-async function callAI(apiKey, messages, maxTokens = 3000) {
-  for (const model of MODELS) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 35000);
-
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://aimora.app',
-          'X-Title': 'Mora Meeting Prep',
-        },
-        body: JSON.stringify({ model, messages, temperature: 0.3, max_tokens: maxTokens }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      const d = await withTimeout(res.json(), 10000);
-      const c = d.choices?.[0]?.message?.content;
-      if (c && c.trim().length > 10) return c;
-      if (res.status === 401) break; // کلید API نامعتبر — ادامه بی‌فایده است
-    } catch { /* timeout or network → try next model */ }
+/**
+ * Returns the assistant's text, or null when the whole chain came up empty.
+ * Callers here degrade to FALLBACK_DATA rather than failing the request,
+ * so a null is expected and handled — but it is always logged first.
+ */
+async function callAI(messages, maxTokens = 3000) {
+  try {
+    const { data } = await aiChat({
+      messages,
+      temperature: 0.3,
+      max_tokens: maxTokens,
+      timeoutMs: 35000,
+      label: 'meeting-preparation',
+    });
+    const c = data.choices?.[0]?.message?.content;
+    if (c && c.trim().length > 10) return c;
+    console.error('[meeting-preparation] model returned an empty or too-short answer');
+    return null;
+  } catch (err) {
+    console.error('[meeting-preparation] AI call failed:', err.message);
+    return null;
   }
-  return null;
 }
 
 function extractJson(text) {
@@ -147,8 +135,6 @@ router.post('/', async (req, res) => {
   if (!result.success) return res.status(400).json({ error: result.error.flatten().fieldErrors });
 
   const { meetingTitle, meetingDescription } = result.data;
-  const LOVABLE_API_KEY = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!LOVABLE_API_KEY) return res.status(500).json({ error: 'AI service is not configured' });
 
   // ── Step 1: دریافت موازی RSS (max 8 sec total) ────────────────────────────
   let iranRawResults = [], intlRawResults = [];
@@ -200,7 +186,7 @@ ${meetingDescription ? `توضیحات: ${meetingDescription}` : ''}${newsSectio
   "suggested_questions": ["سوال مهم ۱ برای طرح در جلسه","سوال ۲","سوال ۳","سوال ۴","سوال ۵"]
 }`;
 
-  const aiContent = await callAI(LOVABLE_API_KEY, [
+  const aiContent = await callAI([
     {
       role: 'system',
       content: 'شما دستیار تخصصی آماده‌سازی جلسه به زبان فارسی هستید. وظیفه شما تولید تحلیل جامع برای آماده شدن قبل از جلسه است. فقط JSON معتبر بدون هیچ توضیح یا متن اضافه خروجی بده.',
@@ -213,7 +199,9 @@ ${meetingDescription ? `توضیحات: ${meetingDescription}` : ''}${newsSectio
     try {
       const parsed = extractJson(aiContent);
       return res.json({ ...parsed, generated_at: new Date().toISOString() });
-    } catch { /* fallback */ }
+    } catch (err) {
+      console.error('[meeting-preparation] could not parse JSON out of the answer:', err.message);
+    }
   }
 
   // Fallback: بدون AI نمی‌توان خبر مرتبط تشخیص داد — آرایه‌های خالی برمی‌گرداند
@@ -221,7 +209,7 @@ ${meetingDescription ? `توضیحات: ${meetingDescription}` : ''}${newsSectio
 
   } catch (err) {
     console.error('[meeting-prep] unhandled error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'خطای داخلی سرور', detail: err.message });
+    if (!res.headersSent) return sendAiError(res, err, 'meeting-preparation');
   }
 });
 

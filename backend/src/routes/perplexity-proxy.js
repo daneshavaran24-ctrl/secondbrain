@@ -1,43 +1,25 @@
 import { Router } from 'express';
+import { aiChat, isAiConfigured, sendAiError, AiError } from '../utils/ai.js';
 
 const router = Router();
 
-const MODELS = ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'deepseek/deepseek-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free'];
-
-async function callAI(apiKey, messages, opts = {}) {
-  for (const model of MODELS) {
-    try {
-      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://aimora.app',
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: opts.temperature || 0.3,
-          max_tokens: opts.max_tokens || 1500,
-        }),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const content = d.choices?.[0]?.message?.content;
-        if (content) return content;
-      }
-      if (r.status === 401) break; // کلید API نامعتبر
-    } catch {
-      // try next model
-    }
+async function callAI(messages, opts = {}) {
+  const { data } = await aiChat({
+    messages,
+    temperature: opts.temperature || 0.3,
+    max_tokens: opts.max_tokens || 1500,
+    label: 'perplexity-proxy',
+  });
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new AiError('empty_response', 502, 'پاسخی از سرویس هوش مصنوعی دریافت نشد.', 'no content in choices[0]');
   }
-  throw new Error('سرویس هوش مصنوعی در دسترس نیست');
+  return content;
 }
 
 router.post('/', async (req, res) => {
-  const API_KEY = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!API_KEY) {
-    return res.status(500).json({ error: 'AI service is not configured', configured: false });
+  if (!isAiConfigured()) {
+    return res.status(503).json({ error: 'سرویس هوش مصنوعی پیکربندی نشده است.', configured: false });
   }
 
   const { action, source, title, detailLevel = 'medium', language = 'persian', customPrompt } = req.body;
@@ -69,17 +51,20 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const content = await callAI(API_KEY, [
+    const content = await callAI([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ], { temperature, max_tokens });
 
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return res.status(500).json({ error: 'فرمت JSON معتبر در پاسخ یافت نشد' });
+    if (!jsonMatch) {
+      console.error('[perplexity-proxy] model returned no JSON object:', content.slice(0, 300));
+      return res.status(502).json({ error: 'فرمت JSON معتبر در پاسخ یافت نشد' });
+    }
 
     res.json({ success: true, data: JSON.parse(jsonMatch[0]) });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'خطای غیرمنتظره' });
+    return sendAiError(res, error, 'perplexity-proxy');
   }
 });
 

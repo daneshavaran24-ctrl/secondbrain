@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 import { requireAuth } from '../middleware/auth.js';
+import { aiChat, sendAiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -25,8 +26,6 @@ router.post('/', requireAuth, async (req, res) => {
   if (!result.success) return res.status(400).json({ error: result.error.errors.map(e => e.message).join(', ') });
 
   const { message, sessionId, sessionType } = result.data;
-  const lovableApiKey = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-  if (!lovableApiKey) return res.status(500).json({ error: 'AI service is not configured' });
 
   try {
     let currentSessionId = sessionId;
@@ -49,24 +48,18 @@ router.post('/', requireAuth, async (req, res) => {
     );
     const history = historyRes.rows.map(r => ({ role: r.role, content: r.content }));
 
-    const MODELS = ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'deepseek/deepseek-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free'];
     const msgPayload = [
       { role: 'system', content: SYSTEM_PROMPTS[sessionType || 'mentor'] || SYSTEM_PROMPTS.mentor },
       ...history.slice(-8),
     ];
 
-    let aiResponse = null;
-    for (const model of MODELS) {
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${lovableApiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://aimora.app' },
-        body: JSON.stringify({ model, messages: msgPayload, temperature: 0.7, max_tokens: 700, stream: true }),
-      });
-      if (resp.ok) { aiResponse = resp; break; }
-      if (resp.status === 401) break; // کلید API نامعتبر
-    }
-
-    if (!aiResponse) throw new Error('سرویس هوش مصنوعی در حال حاضر شلوغ است. لطفاً چند لحظه دیگر تلاش کنید.');
+    const { response: aiResponse } = await aiChat({
+      messages: msgPayload,
+      temperature: 0.7,
+      max_tokens: 700,
+      stream: true,
+      label: 'ai-chat',
+    });
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -100,7 +93,11 @@ router.post('/', requireAuth, async (req, res) => {
       );
     }
   } catch (error) {
-    if (!res.headersSent) res.status(500).json({ error: error.message || 'خطای داخلی سرور' });
+    // Once the SSE stream has started the status line is already sent; all we
+    // can do is log and close, otherwise the client sees a truncated stream.
+    if (!res.headersSent) return sendAiError(res, error, 'ai-chat');
+    console.error('[ai-chat] error mid-stream:', error);
+    res.end();
   }
 });
 

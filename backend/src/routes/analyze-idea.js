@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db/index.js';
 import { requireAuth } from '../middleware/auth.js';
+import { aiChat, AiError } from '../utils/ai.js';
 
 const router = Router();
 
@@ -19,10 +20,6 @@ async function performAnalysis(queueId, userId, title, description, inspirations
     const systemPrompt = `شما یک مشاور خبره تحلیل ایده‌های کسب‌وکار هستید. تحلیل جامع با SWOT، ریسک‌ها، Milestones، اقدامات پیشنهادی، تحلیل مالی. همه پاسخ‌ها به فارسی.`;
     const userPrompt = `ایده زیر را تحلیل کنید:\nعنوان: ${title}\nتوضیحات: ${description}\nحوزه: ${domain || 'عمومی'}${inspirationContext}`;
 
-    const lovableApiKey = process.env.OPENROUTER_API_KEY || process.env.LOVABLE_API_KEY;
-    if (!lovableApiKey) throw new Error('AI service is not configured');
-
-    const MODELS = ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'deepseek/deepseek-v3-0324:free', 'meta-llama/llama-3.3-70b-instruct:free'];
     const aiPayload = {
       messages: [
         { role: 'system', content: systemPrompt },
@@ -54,25 +51,18 @@ async function performAnalysis(queueId, userId, title, description, inspirations
       tool_choice: { type: 'function', function: { name: 'analyze_idea' } },
     };
 
-    let aiResponse = null;
-    for (const model of MODELS) {
-      try {
-        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${lovableApiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://aimora.app' },
-          body: JSON.stringify({ ...aiPayload, model }),
-        });
-        if (r.ok) { aiResponse = r; break; }
-        if (r.status === 401) break; // کلید API نامعتبر
-      } catch { /* try next */ }
-    }
+    // Idea analysis is a long job — allow more headroom than the default.
+    const { data: aiData } = await aiChat({
+      ...aiPayload,
+      max_tokens: 4000,
+      timeoutMs: Number(process.env.AI_TIMEOUT_LONG_MS) || 60000,
+      label: 'analyze-idea',
+    });
 
-    if (!aiResponse) throw new Error('سرویس هوش مصنوعی در دسترس نیست');
-    if (!aiResponse.ok) throw new Error(`AI Gateway error: ${aiResponse.status}`);
-
-    const aiData = await aiResponse.json();
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall?.function?.arguments) throw new Error('Invalid AI response format');
+    if (!toolCall?.function?.arguments) {
+      throw new AiError('bad_tool_call', 502, 'پاسخ سرویس هوش مصنوعی در قالب مورد انتظار نبود.', 'no tool_calls in response');
+    }
 
     const analysis = JSON.parse(toolCall.function.arguments);
     await query(
@@ -80,9 +70,11 @@ async function performAnalysis(queueId, userId, title, description, inspirations
       [JSON.stringify(analysis), queueId]
     );
   } catch (error) {
+    console.error('[analyze-idea] analysis failed:', error);
+    const userMessage = error instanceof AiError ? error.persian : 'خطای ناشناخته در تحلیل ایده';
     await query(
       "UPDATE idea_analysis_queue SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
-      [error.message || 'خطای ناشناخته', queueId]
+      [userMessage, queueId]
     );
   }
 }

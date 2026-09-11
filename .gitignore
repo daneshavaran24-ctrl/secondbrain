@@ -1,0 +1,67 @@
+# Noqte Platform
+.vibe/
+.noqte/
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+.next/
+out/
+build/
+dist/
+dist-ssr/
+*.egg-info/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Cache
+.cache/
+.turbo/
+tsconfig.tsbuildinfo
+
+# OS
+Thumbs.db
+
+# Uploads (user files)
+uploads/*
+!uploads/.gitkeep
+
+# Vercel
+.vercel
+
+# Env files (never commit — set these in the Liara panel)
+.env
+.env.*
+!.env.example

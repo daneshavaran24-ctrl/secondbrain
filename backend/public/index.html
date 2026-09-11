@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mora - مورا | سیستم مدیریت دانش شخصی</title>
+  <meta name="description" content="مورا - مغز دوم دیجیتال برای مدیران و مسئولان" />
+  <meta name="author" content="Mora Team" />
+
+  <meta property="og:title" content="Mora - مورا | سیستم مدیریت دانش شخصی" />
+  <meta property="og:description" content="مورا - مغز دوم دیجیتال برای مدیران و مسئولان" />
+  <meta property="og:type" content="website" />
+
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </noscript>
+
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="مورا">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" href="/android-chrome-192x192.png">
+
+  <style>
+    body { font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif; }
+    .initial-loader {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; background: #fafafa;
+    }
+    @media (prefers-color-scheme: dark) { .initial-loader { background: #0a0a0a; } }
+  </style>
+
+  <!-- Patch fetch:
+       - Supabase auth/rest/storage → /supabase-proxy/* (bypasses Iran blocking)
+       - Supabase Edge Functions (functions/v1/*) → backend routes directly
+  -->
+  <script>
+    (function() {
+      var SUPA_HOST = 'jymajpnwthgqcghmkmam.supabase.co';
+      var _fetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        try {
+          var url = typeof input === 'string' ? input
+            : (input && input.url) ? input.url : String(input);
+          if (url.indexOf(SUPA_HOST) !== -1) {
+            var newUrl;
+            // Edge Function calls → strip /functions/v1 and route to backend
+            var fnMatch = url.match(/https?:\/\/[^/]+\/functions\/v1\/([^?#]+)(.*)/);
+            if (fnMatch) {
+              newUrl = '/' + fnMatch[1] + fnMatch[2];
+            } else {
+              // Auth / REST / Storage → supabase proxy
+              newUrl = url.replace('https://' + SUPA_HOST, '/supabase-proxy');
+            }
+            if (typeof input === 'string') {
+              input = newUrl;
+            } else if (input instanceof Request) {
+              init = init || {};
+              init.headers = init.headers || {};
+              input.headers.forEach(function(v, k) { init.headers[k] = v; });
+              input = newUrl;
+            }
+          }
+        } catch(e) {}
+        return _fetch(input, init);
+      };
+    })();
+  </script>
+
+  <script type="module" crossorigin src="/assets/index-BGVAOgHP.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/chunk-BYMGd5Bb.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-Df1E0gDt.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-JCL0yu5e.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-R64nkx3e.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-CmBAZpGK.js">
+  <link rel="stylesheet" crossorigin href="/assets/index-DXfC6gm1.css">
+</head>
+
+<body>
+  <div id="root">
+    <div class="initial-loader">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 12a9 9 0 11-6.219-8.56" stroke-linecap="round">
+          <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+        </path>
+      </svg>
+    </div>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,208 @@
+import { supabase } from '@/integrations/supabase/client';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import * as pdfjsLib from 'pdfjs-dist';
+import { getCachedSignedUrl } from '@/utils/signedUrlHelper';
+
+// Set up the worker for pdf.js
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+export const getPDFUrl = async (filename: string): Promise<string | null> => {
+  // Since documents bucket is private, generate signed URL
+  return await getCachedSignedUrl('documents', filename, 3600);
+};
+
+export class PDFService {
+  static async generateSettingsChecklist(): Promise<Uint8Array> {
+    try {
+      const pdfDoc = await PDFDocument.create();
+      let page = pdfDoc.addPage([595, 842]); // A4 size
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      
+      const { width, height } = page.getSize();
+      const margin = 50;
+      let yPosition = height - margin;
+      
+      // Title (English only to avoid font issues)
+      page.drawText('Settings Checklist', {
+        x: margin,
+        y: yPosition,
+        size: 20,
+        font: boldFont,
+        color: rgb(0.2, 0.2, 0.2),
+      });
+      
+      yPosition -= 40;
+    
+    const sections = [
+      {
+        title: 'User Account Settings',
+        items: [
+          'Complete profile information',
+          'Set strong password',
+          'Enable two-factor authentication',
+          'Upload profile picture',
+          'Set timezone preferences'
+        ]
+      },
+      {
+        title: 'Calendar Settings',
+        items: [
+          'Sync with external calendars',
+          'Configure event notifications',
+          'Set default event duration',
+          'Enable family field for personal events',
+          'Configure recurring events'
+        ]
+      },
+      {
+        title: 'Project Management',
+        items: [
+          'Set project templates',
+          'Configure team permissions',
+          'Enable task notifications',
+          'Set project priorities',
+          'Configure time tracking'
+        ]
+      },
+      {
+        title: 'Task Delegation',
+        items: [
+          'Add team contacts',
+          'Set delegation templates',
+          'Configure approval workflows',
+          'Enable delegation tracking',
+          'Set reminder schedules'
+        ]
+      },
+      {
+        title: 'Knowledge Management',
+        items: [
+          'Organize knowledge categories',
+          'Set up document tagging',
+          'Configure search preferences',
+          'Enable knowledge sharing',
+          'Set backup schedules'
+        ]
+      },
+      {
+        title: 'Security Settings',
+        items: [
+          'Review access permissions',
+          'Enable activity logging',
+          'Set session timeouts',
+          'Configure data encryption',
+          'Enable security alerts'
+        ]
+      },
+      {
+        title: 'Notifications',
+        items: [
+          'Configure email notifications',
+          'Set SMS preferences',
+          'Enable push notifications',
+          'Set notification frequency',
+          'Configure quiet hours'
+        ]
+      },
+      {
+        title: 'Integration Settings',
+        items: [
+          'Connect third-party services',
+          'Configure API access',
+          'Set up webhooks',
+          'Enable data synchronization',
+          'Configure backup integrations'
+        ]
+      }
+    ];
+    
+    for (const section of sections) {
+      // Section title
+      page.drawText(section.title, {
+        x: margin,
+        y: yPosition,
+        size: 14,
+        font: boldFont,
+        color: rgb(0.1, 0.1, 0.1),
+      });
+      
+      yPosition -= 25;
+      
+      // Section items with checkboxes
+      for (const item of section.items) {
+        // Draw checkbox
+        page.drawRectangle({
+          x: margin + 10,
+          y: yPosition - 2,
+          width: 12,
+          height: 12,
+          borderColor: rgb(0.3, 0.3, 0.3),
+          borderWidth: 1,
+        });
+        
+        // Draw item text
+        page.drawText(item, {
+          x: margin + 30,
+          y: yPosition,
+          size: 11,
+          font: font,
+          color: rgb(0.2, 0.2, 0.2),
+        });
+        
+        yPosition -= 20;
+        
+        // Add new page if needed
+        if (yPosition < margin + 50) {
+          const newPage = pdfDoc.addPage([595, 842]);
+          page = newPage;
+          yPosition = height - margin;
+        }
+      }
+      
+      yPosition -= 10; // Extra space between sections
+    }
+    
+    // Footer
+    const pageCount = pdfDoc.getPageCount();
+    const pages = pdfDoc.getPages();
+    
+    pages.forEach((page, index) => {
+      page.drawText(`Page ${index + 1} of ${pageCount}`, {
+        x: margin,
+        y: 30,
+        size: 10,
+        font: font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+      
+      page.drawText('Generated by Personal Assistant System', {
+        x: width - 200,
+        y: 30,
+        size: 10,
+        font: font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+    });
+    
+    return await pdfDoc.save();
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      throw new Error('Failed to generate PDF checklist');
+    }
+  }
+  
+  static async downloadPDF(pdfBytes: Uint8Array, filename: string): Promise<void> {
+    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+}

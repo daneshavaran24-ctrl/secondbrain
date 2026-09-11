@@ -1,0 +1,52 @@
+project_id = "jymajpnwthgqcghmkmam"
+
+[functions.generate-business-email]
+verify_jwt = false
+
+[functions.telegram-bridge]
+verify_jwt = false
+
+[functions.ai-chat]
+verify_jwt = false
+
+[functions.ai-assistant]
+verify_jwt = true
+
+[functions.analyze-idea]
+verify_jwt = true
+
+[functions.speech-to-text]
+verify_jwt = false
+
+[functions.meeting-preparation]
+verify_jwt = false
+
+[functions.plaud-oauth]
+verify_jwt = false
+
+[functions.plaud-sync]
+verify_jwt = true
+
+[functions.hi-dock-pair]
+verify_jwt = true
+
+[functions.hi-dock-import]
+verify_jwt = true
+
+[functions.hi-dock-transcribe]
+verify_jwt = true
+
+[functions.sub-user-login]
+verify_jwt = false
+
+[functions.create-sub-user]
+verify_jwt = true
+
+[functions.perplexity-proxy]
+verify_jwt = true
+
+[functions.generate-networking-email]
+verify_jwt = false
+
+[functions.smart-assistant]
+verify_jwt = false

@@ -1,0 +1,48 @@
+{
+  "name": "مورا - دستیار هوشمند اجرایی",
+  "short_name": "مورا",
+  "description": "دستیار هوشمند مدیریت شخصی و سازمانی",
+  "id": "https://www.aimora.app/",
+  "start_url": "https://www.aimora.app/?source=pwa",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#064e3b",
+  "orientation": "any",
+  "dir": "rtl",
+  "lang": "fa",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "business", "utilities"],
+  "shortcuts": [
+    {
+      "name": "دستیار هوشمند",
+      "short_name": "دستیار",
+      "description": "باز کردن دستیار هوشمند",
+      "url": "/?assistant=open",
+      "icons": [{ "src": "/android-chrome-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "تقویم",
+      "short_name": "تقویم",
+      "description": "مشاهده رویدادها",
+      "url": "/calendar",
+      "icons": [{ "src": "/android-chrome-192x192.png", "sizes": "192x192" }]
+    }
+  ],
+  "screenshots": [],
+  "related_applications": [],
+  "prefer_related_applications": false
+}

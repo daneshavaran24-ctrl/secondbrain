@@ -1,0 +1,285 @@
+import { useState, useEffect } from "react";
+import { Bell, Search, Settings, Menu, ChevronDown, MapPin, Clock, HelpCircle, Plus, Calendar, BookOpen, FileText } from "lucide-react";
+import { Bell, Search, Settings, Menu, ChevronDown, MapPin, Clock, HelpCircle, Plus, Calendar, BookOpen, User, LogOut, Shield } from "lucide-react";
+import SettingsModal from "./SettingsModal";
+import HelpModal from "./HelpModal";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { NotificationCenter } from "@/components/ui/notification-center";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { useNavigate, useLocation } from "react-router-dom";
+import { PersianNumber } from "@/components/ui/persian-number";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useCurrentUser } from '@/hooks/useUserManagement-simple';
+import { ROLE_NAMES } from "@/types/user-management";
+import { supabase } from "@/integrations/supabase/client";
+
+interface HeaderProps {
+  onMenuClick: () => void;
+  sidebarOpen?: boolean;
+}
+
+const Header = ({ onMenuClick, sidebarOpen = true }: HeaderProps) => {
+  const isMobile = useIsMobile();
+  const [searchValue, setSearchValue] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const currentTime = new Date().toLocaleTimeString('fa-IR', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // استفاده از hook ساده
+  const { data: currentUserData, isLoading } = useCurrentUser();
+  const currentUser = currentUserData?.profile;
+  const currentRole = currentUserData?.role;
+
+  // نام نمایشی کاربر
+  const displayName = currentUser?.display_name || 
+    `${currentUser?.first_name || ''} ${currentUser?.last_name || ''}`.trim() || 
+    'کاربر';
+
+  // سازمان کاربر
+  const organizationName = 'BrainForge System';
+
+  // خروج از سیستم
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/auth');
+  };
+
+  // بررسی دسترسی مدیریت کاربران
+  const [canManageUsers, setCanManageUsers] = useState(false);
+  
+  useEffect(() => {
+    const checkUserManagementAccess = async () => {
+      if (currentRole) {
+        const hasAccess = ['admin', 'general_manager'].includes(currentRole.system_role);
+        setCanManageUsers(hasAccess);
+      }
+    };
+    
+    checkUserManagementAccess();
+  }, [currentRole]);
+  return (
+    <header className={`h-16 glass-sidebar border-b border-border/50 px-4 md:px-6 flex items-center justify-between shadow-glass animate-fade-in transition-all duration-300 z-50 ${
+      isMobile ? 'mr-0' : sidebarOpen ? 'mr-72' : 'mr-16'
+    }`}>
+      {/* Left Section */}
+      <div className="flex items-center gap-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onMenuClick}
+          className="md:hidden hover-scale transition-elegant"
+        >
+          <Menu className="h-4 w-4" />
+        </Button>
+
+        {/* Brand */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 mora-gradient rounded-lg flex items-center justify-center shadow-glow p-1">
+            <img
+              src="/assets/mora-logo.png"
+              alt="Mora Logo"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                const fallback = target.nextElementSibling as HTMLElement;
+                target.style.display = 'none';
+                if (fallback) fallback.style.display = 'block';
+              }}
+            />
+            <div className="w-full h-full flex items-center justify-center font-bold text-white text-sm" style={{ display: 'none' }}>
+              مورا
+            </div>
+          </div>
+          <div className="hidden sm:block">
+            <h1 className="text-lg font-semibold text-foreground">مورا</h1>
+          </div>
+        </div>
+
+        {/* Status Indicators */}
+        <div className="hidden lg:flex items-center gap-3">
+          <Badge variant="outline" className="text-xs bg-background/50 h-6">
+            <Clock className="h-3 w-3 mr-1" />
+            {currentTime}
+          </Badge>
+        </div>
+      </div>
+
+      {/* Center Section - Search Only */}
+      <div className="flex-1 max-w-lg mx-2 md:mx-6">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder={isMobile ? "جستجو..." : "جستجو در دانش، جلسات، وظایف..."}
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
+            className="input-app-standard pl-10 pr-4 bg-background/60 border-border/50 rounded-lg focus:bg-background focus:shadow-glow transition-elegant h-9 text-xs placeholder:text-xs"
+          />
+          {searchValue && (
+            <div className="absolute top-full left-0 right-0 mt-2 bg-background border border-border/50 rounded-lg shadow-floating z-50 p-2">
+              <div className="text-xs text-muted-foreground p-2">پیشنهادات جستجو...</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right Section - User Actions */}
+      <div className="flex items-center gap-1 md:gap-2">
+        {/* Quick Actions - Hidden on mobile to save space */}
+        {!isMobile && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hover-lift transition-elegant h-9 w-9"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48 bg-background border border-border/50 shadow-floating">
+              <DropdownMenuItem
+                className="cursor-pointer hover:bg-muted"
+                onClick={() => navigate('/meetings')}
+              >
+                <Calendar className="h-4 w-4 mr-2" />
+                ایجاد جلسه
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="cursor-pointer hover:bg-muted"
+                onClick={() => navigate('/personal-journal')}
+              >
+                <BookOpen className="h-4 w-4 mr-2" />
+                یادداشت جدید
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="cursor-pointer hover:bg-muted"
+                onClick={() => navigate('/documentation')}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                مستندات سیستم
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* Notifications */}
+        <div className="relative">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative hover-lift transition-elegant h-9 w-9"
+            onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+          >
+            <Bell className="h-4 w-4" />
+            <Badge className="absolute -top-0.5 -right-0.5 h-5 w-5 text-xs bg-destructive border-2 border-background flex items-center justify-center font-persian-nums rounded-full">
+              <PersianNumber>3</PersianNumber>
+            </Badge>
+          </Button>
+          <NotificationCenter
+            isOpen={isNotificationsOpen}
+            onClose={() => setIsNotificationsOpen(false)}
+          />
+        </div>
+
+        {/* Theme Toggle - always visible */}
+        <ThemeToggle />
+
+        {/* Help - Hidden on mobile */}
+        {!isMobile && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hover-lift transition-elegant h-9 w-9"
+            onClick={() => setIsHelpOpen(true)}
+          >
+            <HelpCircle className="h-4 w-4" />
+          </Button>
+        )}
+
+        {/* Settings */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hover-lift transition-elegant h-9 w-9"
+          onClick={() => setIsSettingsOpen(true)}
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+
+        {/* User Profile */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <div className="flex items-center gap-2 pl-2 border-l border-border/50 cursor-pointer hover:bg-muted/50 rounded-lg p-2 transition-all">
+              <div className="hidden md:block text-right">
+                <div className="flex items-center gap-1">
+                  <p className="text-sm font-medium text-foreground">
+                    {isLoading ? 'در حال بارگذاری...' : displayName}
+                  </p>
+                  {currentRole && (
+                    <Badge variant="outline" className="text-xs">
+                      {ROLE_NAMES[currentRole.system_role]}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">{organizationName}</p>
+              </div>
+              <Avatar className="h-8 w-8 shadow-card hover-scale transition-elegant">
+                <AvatarImage 
+                  src={currentUser?.avatar_url || "/placeholder-avatar.jpg"} 
+                  alt={displayName} 
+                />
+                <AvatarFallback className="bg-gradient-professional text-white font-bold text-xs">
+                  {displayName.split(' ')[0]?.slice(0, 2) || 'کا'}
+                </AvatarFallback>
+              </Avatar>
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56" side="bottom">
+
+            <DropdownMenuItem onClick={() => navigate('/profile')}>
+              <User className="ml-2 h-4 w-4" />
+              <span>پروفایل کاربری</span>
+            </DropdownMenuItem>
+            
+            {canManageUsers && (
+              <DropdownMenuItem onClick={() => navigate('/admin/users')}>
+                <Shield className="ml-2 h-4 w-4" />
+                <span>مدیریت کاربران</span>
+              </DropdownMenuItem>
+            )}
+            
+            <DropdownMenuItem onClick={() => setIsSettingsOpen(true)}>
+              <Settings className="ml-2 h-4 w-4" />
+              <span>تنظیمات</span>
+            </DropdownMenuItem>
+            
+            <DropdownMenuSeparator />
+            
+            <DropdownMenuItem onClick={handleSignOut}>
+              <LogOut className="ml-2 h-4 w-4" />
+              <span>خروج</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Modals */}
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+    </header>
+  );
+};
+
+export default Header;

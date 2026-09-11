@@ -166,5 +166,36 @@ await assert.rejects(() => aiChat({ messages: [], label: 't22' }),
 assert.equal(calls.length, 1);
 console.log('22 ok OpenAI 401 → 401 "کلید ... معتبر نیست", chain stops');
 
+// ── Liara service id ─────────────────────────────────────────────────────────
+
+// 23. LIARA_AI_SERVICE_ID alone is enough (this is what the Liara panel shows)
+reset(); process.env.LIARA_AI_API_KEY = 'lk'; process.env.LIARA_AI_SERVICE_ID = '6a80137012c28e91d2fdd0f6';
+assert.equal(resolveProvider().name, 'liara');
+assert.equal(resolveProvider().url, 'https://ai.liara.ir/api/v1/6a80137012c28e91d2fdd0f6/openai/v1/chat/completions');
+console.log('23 ok LIARA_AI_SERVICE_ID assembles the base URL');
+
+// 24. a key without a service id or base URL is not a usable provider
+reset(); process.env.LIARA_AI_API_KEY = 'lk';
+assert.equal(resolveProvider(), null);
+console.log('24 ok LIARA_AI_API_KEY alone does not resolve (needs id or URL)');
+
+// 25. an explicit base URL still wins over the service id
+reset(); process.env.LIARA_AI_API_KEY = 'lk'; process.env.LIARA_AI_SERVICE_ID = 'abc12345';
+process.env.LIARA_AI_BASE_URL = 'https://custom.example.com/v1';
+assert.equal(resolveProvider().url, 'https://custom.example.com/v1/chat/completions');
+console.log('25 ok explicit LIARA_AI_BASE_URL overrides the service id');
+
+// 26. a JWT pasted into the service id field is rejected, not turned into a URL
+reset(); process.env.LIARA_AI_API_KEY = 'lk';
+process.env.LIARA_AI_SERVICE_ID = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc.def';
+assert.equal(resolveProvider(), null, 'a JWT is not a service id');
+console.log('26 ok a key pasted into LIARA_AI_SERVICE_ID is rejected');
+
+// 27. Liara still outranks OpenRouter when both are configured
+reset(); process.env.LIARA_AI_API_KEY = 'lk'; process.env.LIARA_AI_SERVICE_ID = 'abc12345';
+process.env.OPENROUTER_API_KEY = 'or';
+assert.equal(resolveProvider().name, 'liara');
+console.log('27 ok Liara outranks a configured OpenRouter');
+
 globalThis.fetch = realFetch;
-console.log('\nAll 22 checks passed.');
+console.log('\nAll 27 checks passed.');

@@ -116,4 +116,33 @@ assert.equal(shimMessage(r.status, r.body), 'اعتبار سرویس هوش مص
 console.log(`G ok  frontend shim would display: "${shimMessage(r.status, r.body)}"`);
 
 server.close();
-console.log('\nAll 7 end-to-end checks passed.');
+
+
+// ── Contract between the backend's tool list and the frontend executor ───────
+// A tool the model can emit but the frontend cannot execute is a silent
+// dead end: the assistant claims it acted and nothing happens.
+import fs from 'node:fs';
+
+const routeSrc = fs.readFileSync(new URL('../src/routes/smart-assistant.js', import.meta.url), 'utf8');
+const execSrc = fs.readFileSync(new URL('../../frontend/src/services/actionExecutorService.ts', import.meta.url), 'utf8');
+
+const toolNames = [...routeSrc.matchAll(/name:'([a-z_]+)'/g)].map(m => m[1]);
+const executorCases = new Set([...execSrc.matchAll(/case '([a-z_]+)':/g)].map(m => m[1]));
+const safeActions = [...routeSrc.match(/const safeActions = \[([\s\S]*?)\];/)[1].matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
+
+const emitted = toolNames.filter(t => t !== 'ask_clarification');
+const orphans = emitted.filter(t => !executorCases.has(t));
+assert.deepEqual(orphans, [], `tools with no frontend executor: ${orphans.join(', ')}`);
+console.log(`H ok  all ${emitted.length} emittable tools have a frontend executor`);
+
+const strayFlags = safeActions.filter(t => !toolNames.includes(t));
+assert.deepEqual(strayFlags, [], `safeActions names no such tool: ${strayFlags.join(', ')}`);
+console.log(`I ok  all ${safeActions.length} safeActions entries are real tools`);
+
+// Anything that sends a message or destroys data must not auto-execute.
+for (const dangerous of ['send_sms', 'send_notification', 'cancel_meeting', 'update_meeting']) {
+  assert.ok(toolNames.includes(dangerous), `${dangerous} should be offered as a tool`);
+  assert.ok(!safeActions.includes(dangerous), `${dangerous} must require confirmation, not auto-execute`);
+}
+console.log('J ok  send/cancel/update actions still require user confirmation');
+console.log('\nAll end-to-end checks passed.');
